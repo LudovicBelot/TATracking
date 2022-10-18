@@ -1,0 +1,444 @@
+from collections import OrderedDict
+from weakref import ref
+import pandas as pd
+from datetime import date
+import sys
+import os
+from Bio import SeqIO
+import pandas as pd
+from tqdm import tqdm
+from Bio.Blast.Applications import NcbitblastnCommandline, NcbiblastpCommandline
+
+
+#commandline test : python script/TATracking.py input/TAseq.fna input/replicons input/core_genome/core_genome_photorhabdus_genus_features.csv PhAl.1022.00001 input
+
+
+def main():
+
+    #will probably change the sys method to argparse later
+    TA_fasta_file = sys.argv[1]
+    genome_folder = os.path.expanduser(sys.argv[2])
+    core_features_file = sys.argv[3]
+    reference_genome = sys.argv[4]
+    protein_gff_folder = os.path.expanduser(sys.argv[5])
+
+    od_TA = TAfna2dic(TA_fasta_file)
+    TAfile_seqIO = SeqIO.index(TA_fasta_file, "fasta")
+    list_genomes = []
+
+    #create_outdir()
+    tmp_folder = "tmp"
+    outdir = "results"
+
+    #First create (if not already done) a nucleotidic blast db for each genome to study
+    for file in os.listdir(genome_folder):
+        list_genomes.append(file) #useful later to perform the tblastn analysis in each of these genomes
+        if (file.endswith(".fna") or file.endswith(".fasta")) and os.path.exists(tmp_folder+'/blastdb/'+file+".nhr") == False:
+            os.system(f"makeblastdb -in {genome_folder+'/'+file} -out {tmp_folder}/blastdb/{file} -parse_seqids -dbtype nucl")
+    """
+    #now for each of these genomes we will search for the TA using tblastn
+    print("Performing tblastN for each TAs")
+    for TA_operon in tqdm(od_TA.values()):
+        TA_tblastn(TA_operon, list_genomes, TAfile_seqIO, tmp_folder, f"{outdir}/1-tblastn")
+        break
+    """
+    #create a tsv file containing all tblastn from the analysis + their localization compared to the core genome (for each hit)
+    #localize_with_core(outdir, core_features_file) #uncomment here
+
+    #Then associate each Toxin hit with an antitoxin hit if within a same core spot and with an intergenic interval max of 150 bp (?)
+    #Note from now, we keep only hits (toxin & antitoxin) with a %id >= 80 and a %cov >= 80%
+    df_full_TA_tblastn = associate_TA_tblastn_hits(f"{outdir}/1-tblastn/all_tblastn_raw_with_core.csv", od_TA) #uncomment here
+    df_full_TA_tblastn.to_csv(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv" , sep = "\t")
+
+    # for each TA operon hit, we get the neigbouring_genes genes in each genome
+    #df_ref_neigbouring_genes = get_ref_neighbouring_genes(df_full_TA_tblastn, reference_genome, protein_gff_folder)
+    #df_ref_neigbouring_genes.to_csv(f"{outdir}/2-neighbouring_genes/ref_genome_neigbouring_genes.csv", sep = "\t")
+    df_all_neigbouring_genes = get_all_neigbouring_genes(df_full_TA_tblastn, protein_gff_folder)
+    df_all_neigbouring_genes.to_csv(f"{outdir}/2-neighbouring_genes/all_genome_neigbouring_genes.csv", sep = "\t")
+
+    # now we do blast the TAs neighbouring genes from the reference genome in with all neighbouring genes 
+    create_db_blastp(df_all_neigbouring_genes, reference_genome, list_genomes, protein_gff_folder, tmp_folder)
+
+    #for each TA, we do a blastP of each neigbouring genes from the reference genome with the neighbouring genes from the other genomes
+    blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_folder, outdir)
+    #Then we also look for the neigbouring genes in the genome for which we do not have the TA within the same core spot
+    blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, reference_genome, list_genomes, tmp_folder, outdir)
+
+
+
+############################################################################################################################################################
+
+
+def TAfna2dic(fasta_file):
+    od = OrderedDict()
+    
+    with open(fasta_file, "r") as f :
+        count = 0
+        n_TA = 1
+        od[n_TA] = []
+        for line in f:
+            if line.startswith(">"):
+                count +=1
+                od[n_TA].append(line.replace(">","").replace("\n",""))
+            if count == 2 :
+                count =0
+                n_TA +=1 
+                od[n_TA] = []
+    
+    to_delete = []
+    for k,v in od.items():
+        if v == []:
+            to_delete.append(k)
+    for i in to_delete:
+        od.pop(k)
+
+    return od
+
+def TA_tblastn(TA_operon, list_genomes, TAfile_seqIO, tmp_folder, outdir):
+    # first need to create a tmp file with the seq of the toxin
+    with open(tmp_folder+"/"+"tmp_tblastn_query.fasta","w") as f:
+        f.write(f">{TAfile_seqIO[TA_operon[0]].id}\n{TAfile_seqIO[TA_operon[0]].seq}")
+
+    str_columns_tblastn = "6 qseqid qlen sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"
+
+    #now doing the tblastn 
+    for genome in list_genomes :
+        tblastn_cline = NcbitblastnCommandline(query = tmp_folder+"/"+"tmp_tblastn_query.fasta", db =tmp_folder+"/blastdb/"+genome, evalue = 0.1,
+                                            outfmt = str_columns_tblastn , out= f"{outdir}/raw_data/{TA_operon[0]}_{genome.rsplit('.',1)[0]}.csv")
+        stdout, stderr = tblastn_cline()
+
+    # doing the same for the antitoxin 
+    with open(tmp_folder+"/"+"tmp_tblastn_query.fasta","w") as f:
+        f.write(f">{TAfile_seqIO[TA_operon[1]].id}\n{TAfile_seqIO[TA_operon[1]].seq}")
+
+    #now doing the tblastn 
+    for genome in list_genomes :
+        tblastn_cline = NcbitblastnCommandline(query = tmp_folder+"/"+"tmp_tblastn_query.fasta", db =tmp_folder+"/blastdb/"+genome, evalue = 0.1,
+                                            outfmt = str_columns_tblastn , out= f"{outdir}/raw_data/{TA_operon[1]}_{genome.rsplit('.',1)[0]}.csv")
+        stdout, stderr = tblastn_cline()
+
+def localize_with_core(outdir, core_file):
+
+    #first getting the features of each core genes into a dataframe (from the provided core file)
+    df_core = pd.read_csv(core_file, sep = "\t", comment = "#")
+
+    #now looking for each hit of the TA tblastn and their localization compared to the core genome
+    list_tblastn_df = []
+    list_columns = ["qseqid", "qlen", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore"]
+    for file in os.listdir(f"{outdir}/1-tblastn/raw_data"):
+        df = pd.read_csv(f"{outdir}/1-tblastn/raw_data/{file}", sep = "\s+", names = list_columns)
+        df_updated = df.copy(deep = True)
+
+        #first we limit the core_dataframe to the genome & contig on which we found each tblastn hit
+        for tblastn_hit in df.iterrows():
+            df_updated.loc[tblastn_hit[0],"left_core"], df_updated.loc[tblastn_hit[0], "left_core_family"], df_updated.loc[tblastn_hit[0], "right_core"], df_updated.loc[tblastn_hit[0], "right_core_family"] = get_closest_core(tblastn_hit, df_core)
+        list_tblastn_df.append(df_updated)    
+    
+    all_df_tblastn_raw_with_core = pd.concat(list_tblastn_df, ignore_index= True)
+    all_df_tblastn_raw_with_core.to_csv(f"{outdir}/1-tblastn/all_tblastn_raw_with_core.csv", sep = "\t")
+
+    return None
+
+def get_closest_core(row_tblastn_hit, df_core):
+
+    left_core_df = df_core[(df_core["contig"] == row_tblastn_hit[1]["sseqid"]) & (df_core["left_coordinate"] <= min(row_tblastn_hit[1]["sstart"], row_tblastn_hit[1]["send"]))].sort_values("left_coordinate")
+    if left_core_df.empty == False:
+        left_core_gene = left_core_df.iloc[-1]["Unnamed: 0"]
+        left_core_family = int(left_core_df.iloc[-1]["core_family"])
+    else :
+        left_core_gene = "None"
+        left_core_family = "None"
+
+    right_core_df = df_core[(df_core["contig"] == row_tblastn_hit[1]["sseqid"]) & (df_core["right_coordinate"] >= max(row_tblastn_hit[1]["sstart"], row_tblastn_hit[1]["send"]))].sort_values("right_coordinate")
+    if right_core_df.empty == False:
+        right_core_gene = right_core_df.iloc[0]["Unnamed: 0"]
+        right_core_family = int(right_core_df.iloc[0]["core_family"])
+    else :
+        right_core_gene = "None"
+        right_core_family = "None"
+
+    return left_core_gene, left_core_family, right_core_gene, right_core_family
+
+def associate_TA_tblastn_hits(all_tblastn_csv , od_TA):
+    
+    #return a new dataframe with toxin/antitoxin tblastn hits associated if within the same core spot & not farthest than 150 bp
+    df_all_tblastn = pd.read_csv(all_tblastn_csv, sep = "\t", index_col = 0)
+    df_all_tblastn_80 = df_all_tblastn[(df_all_tblastn["pident"] >= 80) & (df_all_tblastn["length"]/df_all_tblastn["qlen"]*100 >= 80)]
+    d_full_TA = {}
+    n_index = 0
+
+    for TA_operon in od_TA.values():
+        for toxin_hit_row in df_all_tblastn_80[df_all_tblastn_80["qseqid"] == TA_operon[0]].iterrows():
+            df_tmp_antitox = df_all_tblastn_80[(df_all_tblastn_80["qseqid"] == TA_operon[1]) & (df_all_tblastn_80["left_core_family"] == toxin_hit_row[1]["left_core_family"])
+            & (df_all_tblastn_80["right_core_family"] == toxin_hit_row[1]["right_core_family"])]
+            #now we keep only close hits >150bp
+            if df_tmp_antitox.empty == False :
+                df_tmp_antitox = df_tmp_antitox[(abs(df_tmp_antitox["sstart"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) |
+                                                (abs(df_tmp_antitox["sstart"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) |
+                                                (abs(df_tmp_antitox["send"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) |
+                                                (abs(df_tmp_antitox["send"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) ]
+                if df_tmp_antitox.empty == False:
+                    #if there are still multiples hits, we keep the one we the highest e-value (I don't think it should happen often)
+                    antitox_hit_row = df_tmp_antitox.sort_values("evalue").iloc[0]
+                    d_full_TA[n_index] = {"ref_toxin": toxin_hit_row[1]["qseqid"], "tox_pident": toxin_hit_row[1]["pident"], "tox_pcov": toxin_hit_row[1]["length"]/toxin_hit_row[1]["qlen"]*100, "tox_evalue": toxin_hit_row[1]["evalue"],
+                                        "tox_left_coordinate": min(toxin_hit_row[1]["sstart"], toxin_hit_row[1]["send"]), "tox_right_coordinate": max(toxin_hit_row[1]["sstart"],toxin_hit_row[1]["send"]),
+                                        "ref_antitoxin": antitox_hit_row["qseqid"], "antitox_pident": antitox_hit_row["pident"], "antitox_pcov": antitox_hit_row["length"]/antitox_hit_row["qlen"]*100, "antitox_evalue": antitox_hit_row["evalue"],
+                                        "antitox_left_coordinate": min(antitox_hit_row["sstart"], antitox_hit_row["send"]), "antitox_right_coordinate": max(antitox_hit_row["sstart"], antitox_hit_row["send"]),
+                                        "genome_name": toxin_hit_row[1]["sseqid"][:-5], "sseqid_TA": toxin_hit_row[1]["sseqid"], "left_core_gene": toxin_hit_row[1]["left_core"], "left_core_family": toxin_hit_row[1]["left_core_family"],
+                                        "right_core_gene": toxin_hit_row[1]["right_core"], "right_core_family": toxin_hit_row[1]["right_core_family"]
+                                        }
+                    n_index += 1
+    
+    df_full_TA = pd.DataFrame.from_dict(d_full_TA, orient = "index")
+    return df_full_TA
+
+def get_ref_neighbouring_genes(df_full_TA_tblastn, reference_genome, protein_gff_folder):
+    #return a dataframe with the 10 closest genes (5 upstream & downstream) of the TA_tblastn coordinates only in the reference genome
+    #Note: it will stop if one of these genes is part of the core genome 
+    #Also: overlapping genes within the coordinates of the TA tblastn hit are excluded.
+
+    gff_columns = ["contig","source","type", "left_coordinate", "right_coordinate", "dot", "strand", "0" ,"description"]
+
+    df_full_TA_ref = df_full_TA_tblastn[df_full_TA_tblastn["genome_name"] == reference_genome]
+    df_ref_genome = pd.read_csv(f"{protein_gff_folder}/gff3/{reference_genome}.gff", sep ="\t", names = gff_columns, comment ="#")
+    df_ref_genome["description"] = df_ref_genome["description"].apply(lambda x: x.split(';')[0].split('=')[-1])
+    
+    d_TA_ref_neighbouring_genes = {}
+    for TA_detected in df_full_TA_ref.iterrows():
+        tmp_index_core_left = df_ref_genome[df_ref_genome["description"] == TA_detected[1]["left_core_gene"]].index[0]
+        tmp_index_core_right = df_ref_genome[df_ref_genome["description"] == TA_detected[1]["right_core_gene"]].index[0]
+        df_core_spot = df_ref_genome.iloc[tmp_index_core_left +1 :tmp_index_core_right]
+        df_up_core_spot = df_core_spot[df_core_spot["right_coordinate"] <= min(TA_detected[1]["tox_left_coordinate"],TA_detected[1]["antitox_left_coordinate"])]
+        df_dw_core_spot = df_core_spot[df_core_spot["left_coordinate"] >= max(TA_detected[1]["tox_right_coordinate"],TA_detected[1]["antitox_right_coordinate"])]
+
+        list_ref_neighbouring_genes = []
+        if len(df_up_core_spot) >= 5 :
+            list_ref_neighbouring_genes = df_up_core_spot.iloc[-5:]["description"].tolist()
+        elif len(df_up_core_spot) < 5 and len(df_up_core_spot) > 0: #In case there are not 5 genes upstream within the same core spot, we take the maximum we can 
+            list_ref_neighbouring_genes = df_up_core_spot.iloc[-len(df_up_core_spot):]["description"].tolist()
+        
+        if len(df_dw_core_spot) >= 5 :
+            list_ref_neighbouring_genes += df_dw_core_spot.iloc[:5]["description"].tolist()
+        if len(df_dw_core_spot) < 5 and len(df_dw_core_spot) > 0:
+            list_ref_neighbouring_genes += df_dw_core_spot.iloc[:len(df_dw_core_spot)]["description"].tolist()
+        
+        d_TA_ref_neighbouring_genes[f"{TA_detected[1]['ref_toxin']}-{TA_detected[1]['ref_antitoxin']}"] = {"neighbouring_genes" : ",".join(list_ref_neighbouring_genes),
+                                                                                                            "n_neigbours": len(list_ref_neighbouring_genes)
+                                                                                                            }
+    
+    df_TA_ref_neighbouring_genes = pd.DataFrame.from_dict(d_TA_ref_neighbouring_genes, orient = "index")
+    
+    return df_TA_ref_neighbouring_genes
+
+
+def get_all_neigbouring_genes(df_full_TA_tblastn, protein_gff_folder):
+    #return a dataframe with the 10 closest genes (5 upstream & downstream) of the TA_tblastn coordinates only in the reference genome
+    #Note: it will stop if one of these genes is part of the core genome 
+    #Also: overlapping genes within the coordinates of the TA tblastn hit are excluded.
+
+    gff_columns = ["contig","source","type", "left_coordinate", "right_coordinate", "dot", "strand", "0" ,"description"]
+    list_genomes = df_full_TA_tblastn["genome_name"].drop_duplicates().tolist()
+    n_index = 0
+    d_TA_hits_neighbours = {}
+
+    for genome in list_genomes :
+        df_gff_this_genome = pd.read_csv(f"{protein_gff_folder}/gff3/{genome}.gff", sep = "\t", comment = "#", names = gff_columns)
+        df_gff_this_genome["description"] = df_gff_this_genome["description"].apply(lambda x: x.split(';')[0].split('=')[-1])
+        df_gff_this_genome = df_gff_this_genome[df_gff_this_genome["type"] == "CDS"]
+        df_TA_this_genome = df_full_TA_tblastn[df_full_TA_tblastn["genome_name"] == genome]
+
+        for TA_hit in df_TA_this_genome.iterrows():
+            if TA_hit[1]["left_core_gene"] != "None":
+                tmp_index_core_left = df_gff_this_genome[df_gff_this_genome["description"] == TA_hit[1]["left_core_gene"]].index[0]
+            else :
+                tmp_index_core_left = None
+            if TA_hit[1]["right_core_gene"] != "None":
+                tmp_index_core_right = df_gff_this_genome[df_gff_this_genome["description"] == TA_hit[1]["right_core_gene"]].index[0]
+            else :
+                tmp_index_core_right = None
+            
+            if tmp_index_core_right != None and tmp_index_core_left != None :
+                df_core_spot = df_gff_this_genome[df_gff_this_genome["contig"] == TA_hit[1]["sseqid_TA"]].loc[tmp_index_core_left +1 :tmp_index_core_right-1]
+            elif tmp_index_core_right == None and tmp_index_core_left != None :
+                df_core_spot = df_gff_this_genome[df_gff_this_genome["contig"] == TA_hit[1]["sseqid_TA"]].loc[tmp_index_core_left +1 :]
+            elif tmp_index_core_right != None and tmp_index_core_left == None :
+                df_core_spot = df_gff_this_genome[df_gff_this_genome["contig"] == TA_hit[1]["sseqid_TA"]].loc[:tmp_index_core_right-1]
+            else :
+                df_core_spot = df_gff_this_genome[df_gff_this_genome["contig"] == TA_hit[1]["sseqid_TA"]]
+
+
+            list_neighbouring_genes = []
+            if df_core_spot.empty == False: #in case it remains only the tblastn hits within  a core spot but no complete ORFs
+                df_up_core_spot = df_core_spot[df_core_spot["right_coordinate"] <= min(TA_hit[1]["tox_left_coordinate"],TA_hit[1]["antitox_left_coordinate"])]
+                df_dw_core_spot = df_core_spot[df_core_spot["left_coordinate"] >= max(TA_hit[1]["tox_right_coordinate"],TA_hit[1]["antitox_right_coordinate"])]
+
+                if len(df_up_core_spot) >= 5 :
+                    list_neighbouring_genes = df_up_core_spot.iloc[-5:]["description"].tolist()
+                elif len(df_up_core_spot) < 5 and len(df_up_core_spot) > 0: #In case there are not 5 genes upstream within the same core spot, we take the maximum we can 
+                    list_neighbouring_genes = df_up_core_spot.iloc[-len(df_up_core_spot):]["description"].tolist()
+                
+                if len(df_dw_core_spot) >= 5 :
+                    list_neighbouring_genes += df_dw_core_spot.iloc[:5]["description"].tolist()
+                if len(df_dw_core_spot) < 5 and len(df_dw_core_spot) > 0:
+                    list_neighbouring_genes += df_dw_core_spot.iloc[:len(df_dw_core_spot)]["description"].tolist()
+
+            d_TA_hits_neighbours[n_index] = {"TA_homolog_of": f"{TA_hit[1]['ref_toxin']}-{TA_hit[1]['ref_antitoxin']}",
+                                            "genome_name": genome,
+                                            "contig": TA_hit[1]["sseqid_TA"],
+                                            "left_core_gene": TA_hit[1]["left_core_gene"],
+                                            "left_core_family": TA_hit[1]["left_core_family"],
+                                            "right_core_gene": TA_hit[1]["right_core_gene"],
+                                            "right_core_family": TA_hit[1]["right_core_family"],
+                                            "n_neighbours": len(list_neighbouring_genes),
+                                            'neighbours_genes': ",".join(list_neighbouring_genes)
+                                            }
+            n_index +=1
+
+    df_TA_hits_neighbours = pd.DataFrame.from_dict(d_TA_hits_neighbours, orient = "index")
+    #df_TA_hits_neighbours.sort_values(by = "TA_homolog_of", inplace = True)
+    return df_TA_hits_neighbours
+
+def create_db_blastp(df_all_neigbouring_genes, reference_genome, list_genomes, protein_gff_folder, tmp_folder): 
+
+    #create two .faa files, one with all neighbouring genes from the the reference genome, and one with all neighbouring genes within the others genomes
+    df_ref = df_all_neigbouring_genes[df_all_neigbouring_genes["genome_name"] == reference_genome]
+    str_list_ref_neighbours = ",".join(df_ref["neighbours_genes"].tolist())
+    list_ref_neighbours =  [x for x in str_list_ref_neighbours.split(",") if x] #create a list without empty string
+    list_ref_neighbours = list(set(list_ref_neighbours)) #delete duplicates
+
+    ref_seqIO = SeqIO.index(f"{protein_gff_folder}/Proteins/{reference_genome}.prt", "fasta")
+    with open(f"{tmp_folder}/ref_genome_neighbours_db.faa", "w") as f:
+        for neighbor in list_ref_neighbours:
+            f.write(f">{ref_seqIO[neighbor].id}\n{ref_seqIO[neighbor].seq}\n")
+
+    #os.system(f"makeblastdb -in {tmp_folder}/ref_genome_db.faa -out {tmp_folder}/ref_genome_db -parse_seqids -dbtype prot")
+
+    """
+    #now creating the database of the neighbouring genes in the others genomes
+    df_others = df_all_neigbouring_genes[df_all_neigbouring_genes["genome_name"] != reference_genome]
+    str_list_others_neighbours =",".join(df_others["neighbours_genes"].tolist())
+    list_others_neighbours = [x for x in str_list_others_neighbours.split(",") if x]
+    list_others_neighbours =list(set(list_others_neighbours))
+    list_others_genomes = df_all_neigbouring_genes[df_all_neigbouring_genes["genome_name"] != reference_genome]["genome_name"].drop_duplicates().tolist()
+
+    all_seqIO = None
+    for g in list_others_genomes:
+        if all_seqIO == None :
+            all_seqIO = SeqIO.index(f"{protein_gff_folder}/Proteins/{g}.prt", "fasta")
+        else :
+            all_seqIO = MultiIndexDict(all_seqIO, SeqIO.index(f"{protein_gff_folder}/Proteins/{g}.prt", "fasta"))
+    
+    with open(f"{tmp_folder}/all_others_genome_neighbours_db.faa", "w") as f:
+        for neighbor in list_others_neighbours:
+            f.write(f">{all_seqIO[neighbor].id}\n{all_seqIO[neighbor].seq}\n")
+
+    os.system(f"makeblastdb -in {tmp_folder}/all_others_genome_neighbours_db.faa -out {tmp_folder}/all_others_genome_neighbours_db -parse_seqids -dbtype prot")
+    """
+    #now creating a prt database with all proteomes sequences except for the reference genome
+    list_genomes = [x.rsplit(".",1)[0] for x in list_genomes if x.rsplit(".",1)[0] != reference_genome]
+    str_cat_proteome = ""
+    for g in list_genomes:
+        str_cat_proteome += f"{protein_gff_folder}/Proteins/{g}.prt "
+    
+    os.system(f"cat {str_cat_proteome} > {tmp_folder}/all_proteome_db.prt")
+    os.system(f"makeblastdb -in {tmp_folder}/all_proteome_db.prt -out {tmp_folder}/all_proteome_db -parse_seqids -dbtype prot")
+
+
+
+def blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_folder, outdir):
+
+    #recreating the SeqIO index iterator with all genes neighbouring the TAs in the 
+    ref_neigbours_seqio = SeqIO.index(f"{tmp_folder}/ref_genome_neighbours_db.faa", "fasta")
+
+    #doing the blastp analysis to compare each neigbouring genes from the reference genome to the ones of the other genomes
+    list_columns = ["qseqid", "qlen", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore"]
+    str_columns_blastp = "6 qseqid qlen sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"
+
+    for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
+        #first generate a temporary file with the sequence of the TA neigbouring proteins
+        list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
+        list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
+        with open(f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", "w") as tmp_query:
+            for i in list_ref_neigbours_this_TA:
+                tmp_query.write(f">{ref_neigbours_seqio[i].id}\n{ref_neigbours_seqio[i].seq}\n")
+        
+        #now doing the blastp with these protein sequences and restricting the blast subject database to all proteins sequences which are neigbouring the TA in the others genome.
+        #for restricting the search it needs a file with the id of all sequences to use, one per line
+        list_other_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] != reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]["neighbours_genes"].tolist()
+        list_other_neigbours_this_TA_formated = []
+        for list_neighbours in list_other_neigbours_this_TA:
+            list_other_neigbours_this_TA_formated += [x for x in list_neighbours.split(",") if x]
+        
+        with open(f"{tmp_folder}/tmp_seqidlist.lst", "w") as tmp_seqidlist:
+            for i in list_other_neigbours_this_TA_formated:
+                tmp_seqidlist.write(f"{i}\n")
+
+
+        blastp_cline = NcbiblastpCommandline(query = f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", db = f"{tmp_folder}/all_proteome_db", evalue = 0.1,
+                                            outfmt = str_columns_blastp , seqidlist = f"{tmp_folder}/tmp_seqidlist.lst",
+                                            out= f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_near_TA.csv")
+        stdout, stderr = blastp_cline()
+
+
+def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, reference_genome, list_genomes, tmp_folder, outdir):
+
+    list_genomes = [x.rsplit(".",1)[0] for x in list_genomes if x.rsplit(".",1)[0] != reference_genome]
+
+    #First we store the core spot of each TA in the ref genome in a dictionnary k = TA => v: [core_gene_family_left, core_gene_family_right]
+    d_TA_core_ref = {}
+    for TA in df_all_neigbouring_genes.drop_duplicates(subset = "TA_homolog_of")["TA_homolog_of"].tolist():
+        d_TA_core_ref[TA] = [df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["left_core_family"].values[0],
+                            df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["right_core_family"].values[0]]
+
+    #now checking if the TA found in the others genomes are part of the same core spot (if so, we don't need to do the blastp analysis here for those genomes)
+    d_genome_with_TA_same_core_spot = {} # k = TA, v = list of genomes with the TA within the same core spot 
+    for TA in d_TA_core_ref.keys():
+        d_genome_with_TA_same_core_spot[TA] = []
+        for genome in list_genomes :
+            df_tmp = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]
+            for row in df_tmp.iterrows():
+                if (row[1]["left_core_family"] in d_TA_core_ref[TA] and row[1]["right_core_family"] in d_TA_core_ref[TA]) or (row[1]["left_core_family"] == "None" and row[1]["right_core_family"] in d_TA_core_ref[TA]) or (row[1]["left_core_family"] in d_TA_core_ref[TA] and row[1]["right_core_family"] == "None"):
+                    d_genome_with_TA_same_core_spot[TA].append(genome)
+                    break
+    
+    #creating a dictionnary with the genomes for which we do not have the TA within the same core spot
+    d_genome_with_noTA_same_core_spot = {}
+    for k,v in d_genome_with_TA_same_core_spot.items():
+        d_genome_with_noTA_same_core_spot[k] = [x for x in list_genomes if x not in v]
+
+    ref_neigbours_seqio = SeqIO.index(f"{tmp_folder}/ref_genome_neighbours_db.faa", "fasta")
+    #now create a query_tmp file with the sequences of the ref neighbouring genes
+    for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
+        list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
+        list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
+        with open(f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", "w") as tmp_query:
+            for i in list_ref_neigbours_this_TA:
+                tmp_query.write(f">{ref_neigbours_seqio[i].id}\n{ref_neigbours_seqio[i].seq}\n")
+
+    # And finally getting the genes within the same core spot in the genomes stored dict "d_genome_with_noTA_same_core_spot"
+    # Note: in case the core spot is incomplete, meaning that both core spot are located on different contigs, 
+    # we're trying to determine first if they are other core genes on the same contig which could help us to determine the core spot,
+    # if it's not possible we're trying the 4 combinaisons and keeping the best results
+
+
+
+
+
+
+
+####################################################################################################################################
+
+class MultiIndexDict:
+    def __init__(self, *indexes):
+        self._indexes = indexes
+    def __getitem__(self, key):
+        for idx in self._indexes:
+            try:
+                return idx[key]
+            except KeyError:
+                pass
+        raise KeyError("{0} not found".format(key))
+
+
+if __name__ == "__main__" :
+        main()

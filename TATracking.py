@@ -62,7 +62,7 @@ def main():
     #for each TA, we do a blastP of each neigbouring genes from the reference genome with the neighbouring genes from the other genomes
     blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_folder, outdir)
     #Then we also look for the neigbouring genes in the genome for which we do not have the TA within the same core spot
-    blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, reference_genome, list_genomes, tmp_folder, outdir)
+    blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_features_file, reference_genome, list_genomes, protein_gff_folder, tmp_folder, outdir)
 
 
 
@@ -380,7 +380,7 @@ def blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_fol
         stdout, stderr = blastp_cline()
 
 
-def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, reference_genome, list_genomes, tmp_folder, outdir):
+def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_features_file, reference_genome, list_genomes, protein_gff_folder, tmp_folder, outdir):
 
     list_genomes = [x.rsplit(".",1)[0] for x in list_genomes if x.rsplit(".",1)[0] != reference_genome]
 
@@ -419,6 +419,48 @@ def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, reference_ge
     # Note: in case the core spot is incomplete, meaning that both core spot are located on different contigs, 
     # we're trying to determine first if they are other core genes on the same contig which could help us to determine the core spot,
     # if it's not possible we're trying the 4 combinaisons and keeping the best results
+
+    #storing in a dict all genomes gff dataframes
+    names_columns_gff = ["contig","source","type", "left_coordinate", "right_coordinate", "dot", "strand", "0" ,"description"] 
+    d_gff = {}
+    for g in list_genomes:
+        d_gff[g] = pd.read_csv(f"{protein_gff_folder}/gff3/{g}.gff", comment = "#", sep = "\t", names = names_columns_gff)
+        d_gff[g]["description"] = d_gff[g]["description"].apply(lambda x: x.split(';')[0].split('=')[-1])
+
+    # First we create a nested dict with k = TA, v = {genome: list_genes_same_corespot}
+    d_corespot_genes2test = {}
+    df_core_features = pd.read_csv(core_features_file, sep = "\t", header = 0, comment ="#", index_col = 0)
+    for TA, list_genome_to_search_in in d_genome_with_noTA_same_core_spot.items():
+        d_corespot_genes2test[TA] = {}
+        for g in list_genome_to_search_in:
+            tmp_core1_row = df_core_features[(df_core_features["core_family"] == int(d_TA_core_ref[TA][0].rsplit(".",1)[0])) & (df_core_features["genome_name"] == g)]
+            tmp_core2_row = df_core_features[(df_core_features["core_family"] == int(d_TA_core_ref[TA][1].rsplit(".",1)[0])) & (df_core_features["genome_name"] == g)]
+            # Easiest case, both core are on the same contig, in this case we keep the genes
+            if tmp_core1_row["contig"].values[0] == tmp_core2_row["contig"].values[0]:
+                tmp_index1 = d_gff[g][d_gff[g]["description"] == tmp_core1_row.index[0]].index[0]
+                tmp_index2 = d_gff[g][d_gff[g]["description"] == tmp_core2_row.index[0]].index[0]
+                d_corespot_genes2test[TA][g] = d_gff[g].iloc[min(tmp_index1,tmp_index2)+1:max(tmp_index1,tmp_index2)]["description"].tolist()
+            
+            # In case, we have the two core genes on different contigs in this genome, we first try to determine if there are others core genes within the same contig 
+            # which would help us to determine the probable contig orientation
+            elif tmp_core1_row["contig"].values[0] != tmp_core2_row["contig"].values[0] :
+                print(f"core1 = {tmp_core1_row.index[0]}     :::::::     core2 = {tmp_core2_row.index[0]}")
+                tmp_list_genes2test = []
+                tmp_index1 = d_gff[g][d_gff[g]["description"] == tmp_core1_row.index[0]].index[0]
+                tmp_index2 = d_gff[g][d_gff[g]["description"] == tmp_core2_row.index[0]].index[0]
+                #there are others core genes within these contigs
+                if len(df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]]) >=2:
+                    #and the core gene is either the first one or the last one on this contig (then we take the genes on the extremity of the contig)
+                    if df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").index[0] == tmp_core1_row.index[0] :
+                        tmp_list_genes2test += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
+
+                    elif df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").index[-1] == tmp_core1_row.index[0] :
+                        tmp_list_genes2test += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
+                
+                
+
+
+
 
 
 

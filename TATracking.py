@@ -62,8 +62,10 @@ def main():
     #for each TA, we do a blastP of each neigbouring genes from the reference genome with the neighbouring genes from the other genomes
     blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_folder, outdir)
     #Then we also look for the neigbouring genes in the genome for which we do not have the TA within the same core spot
-    blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_features_file, reference_genome, list_genomes, protein_gff_folder, tmp_folder, outdir)
+    d_corespot_testedgenes_noTA, d_genome_with_TA_same_core_spot = blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_features_file, reference_genome, list_genomes, protein_gff_folder, tmp_folder, outdir)
 
+    #analyzing the results of the previous steps
+    analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_testedgenes_noTA, reference_genome, list_genomes, outdir)
 
 
 ############################################################################################################################################################
@@ -406,15 +408,6 @@ def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_feature
     for k,v in d_genome_with_TA_same_core_spot.items():
         d_genome_with_noTA_same_core_spot[k] = [x for x in list_genomes if x not in v]
 
-    ref_neigbours_seqio = SeqIO.index(f"{tmp_folder}/ref_genome_neighbours_db.faa", "fasta")
-    #now create a query_tmp file with the sequences of the ref neighbouring genes
-    for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
-        list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
-        list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
-        with open(f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", "w") as tmp_query:
-            for i in list_ref_neigbours_this_TA:
-                tmp_query.write(f">{ref_neigbours_seqio[i].id}\n{ref_neigbours_seqio[i].seq}\n")
-
     # And finally getting the genes within the same core spot in the genomes stored dict "d_genome_with_noTA_same_core_spot"
     # Note: in case the core spot is incomplete, meaning that both core spot are located on different contigs, 
     # we're trying to determine first if they are other core genes on the same contig which could help us to determine the core spot,
@@ -427,7 +420,7 @@ def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_feature
         d_gff[g] = pd.read_csv(f"{protein_gff_folder}/gff3/{g}.gff", comment = "#", sep = "\t", names = names_columns_gff)
         d_gff[g]["description"] = d_gff[g]["description"].apply(lambda x: x.split(';')[0].split('=')[-1])
 
-    # First we create a nested dict with k = TA, v = {genome: list_genes_same_corespot}
+    # First we create a nested dict with k = TA, v = {genome: [list of list_genes_same_corespot]}
     d_corespot_genes2test = {}
     df_core_features = pd.read_csv(core_features_file, sep = "\t", header = 0, comment ="#", index_col = 0)
     for TA, list_genome_to_search_in in d_genome_with_noTA_same_core_spot.items():
@@ -437,28 +430,190 @@ def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_feature
             tmp_core2_row = df_core_features[(df_core_features["core_family"] == int(d_TA_core_ref[TA][1].rsplit(".",1)[0])) & (df_core_features["genome_name"] == g)]
             # Easiest case, both core are on the same contig, in this case we keep the genes
             if tmp_core1_row["contig"].values[0] == tmp_core2_row["contig"].values[0]:
+                print("Same contig for ",g)
                 tmp_index1 = d_gff[g][d_gff[g]["description"] == tmp_core1_row.index[0]].index[0]
                 tmp_index2 = d_gff[g][d_gff[g]["description"] == tmp_core2_row.index[0]].index[0]
-                d_corespot_genes2test[TA][g] = d_gff[g].iloc[min(tmp_index1,tmp_index2)+1:max(tmp_index1,tmp_index2)]["description"].tolist()
+                d_corespot_genes2test[TA][g] = [d_gff[g].iloc[min(tmp_index1,tmp_index2)+1:max(tmp_index1,tmp_index2)]["description"].tolist()]
             
             # In case, we have the two core genes on different contigs in this genome, we first try to determine if there are others core genes within the same contig 
             # which would help us to determine the probable contig orientation
             elif tmp_core1_row["contig"].values[0] != tmp_core2_row["contig"].values[0] :
-                print(f"core1 = {tmp_core1_row.index[0]}     :::::::     core2 = {tmp_core2_row.index[0]}")
-                tmp_list_genes2test = []
+                print("Different contig for ",g)
+                print(f"Core 1 ===> {tmp_core1_row.index[0]}, Core2 ====> {tmp_core2_row.index[0]}")
+                #then it exists 4 possible combinaison of the core spot reconstitution
+                list_of_list_genes2test = []
+                tmp_list_1 = []
+                tmp_list_2 = []
+                tmp_list_3 = []
+                tmp_list_4 = []
+
                 tmp_index1 = d_gff[g][d_gff[g]["description"] == tmp_core1_row.index[0]].index[0]
                 tmp_index2 = d_gff[g][d_gff[g]["description"] == tmp_core2_row.index[0]].index[0]
                 #there are others core genes within these contigs
                 if len(df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]]) >=2:
+                    print(df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate"))
                     #and the core gene is either the first one or the last one on this contig (then we take the genes on the extremity of the contig)
                     if df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").index[0] == tmp_core1_row.index[0] :
-                        tmp_list_genes2test += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
+                        tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
 
                     elif df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").index[-1] == tmp_core1_row.index[0] :
-                        tmp_list_genes2test += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
-                
-                
+                        tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
 
+                    # in case the core gene is not at the extremity of the contig (maybe due to wrong assembly/ large rearragement?) 
+                    # we keep the genes up to the next core genes (2 combinaisons then)
+                    elif (df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").index[-1] != tmp_core1_row.index[0]) and df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").index[0] != tmp_core1_row.index[0]:
+                        # need to get the index of the two closest core from our core reference gene
+                        #it is a bit messy, will try later to change that
+                        df_core_this_contig = df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]].sort_values(by = "left_coordinate").reset_index(drop = False)
+                        new_neighbouring_core_genes = [df_core_this_contig.iloc[df_core_this_contig[df_core_this_contig["index"] == tmp_core1_row.index[0]].index[0]-1],
+                                                    df_core_this_contig.iloc[df_core_this_contig[df_core_this_contig["index"] == tmp_core1_row.index[0]].index[0]+1]]
+
+                        tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core1_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist()
+                        tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core1_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist()
+
+
+                # if there are no others core genes on the same contig, we do create both combinaisons
+                elif len(df_core_features[df_core_features["contig"] == tmp_core1_row["contig"].values[0]]) <2:
+                    tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()    
+                    tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core1_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core1_row["left_coordinate"].values[0]))]["description"].tolist()
+
+                # now looking for the second reference core gene
+                # Note: we need to be careful now that there are already two possible existing list of genes
+                if len(df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]]) >=2:
+                    print(df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]].sort_values(by = "left_coordinate"))
+                    if df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]].sort_values(by = "left_coordinate").index[0] == tmp_core2_row.index[0] :
+                        if tmp_list_1 != []:
+                            tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        if tmp_list_2 != []:
+                            tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        if tmp_list_1 == [] and tmp_list_2 == []:
+                            tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+
+
+                    elif df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]].sort_values(by = "left_coordinate").index[-1] == tmp_core2_row.index[0] :
+                        if tmp_list_1 != []:
+                            tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        if tmp_list_2 != []:
+                            tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        if tmp_list_1 == [] and tmp_list_2 == []:
+                            tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+
+
+                    #finally if the second core gene is also in the middle of new core genes we have 4 combinaisons
+                    elif (df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]].sort_values(by = "left_coordinate").index[-1] != tmp_core2_row.index[0]) and df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]].sort_values(by = "left_coordinate").index[0] != tmp_core2_row.index[0]:
+                        df_core_this_contig = df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]].sort_values(by = "left_coordinate").reset_index(drop = False)
+                        new_neighbouring_core_genes = [df_core_this_contig.iloc[df_core_this_contig[df_core_this_contig["index"] == tmp_core2_row.index[0]].index[0]-1],
+                                                    df_core_this_contig.iloc[df_core_this_contig[df_core_this_contig["index"] == tmp_core2_row.index[0]].index[0]+1]]
+
+                        if tmp_list_1 != []:
+                            if d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist() != [] and d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist() != []:
+                                tmp_list_3 = tmp_list_1 + d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist()
+                                tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist()
+                                
+                            elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist() != [] :
+                                tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist()
+
+                            elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist() != [] :
+                                tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist()
+
+                        if tmp_list_2 != []:
+                            if d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist() != [] and d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist() != []:
+                                tmp_list_4 = tmp_list_2 + d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist()
+                                tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist()
+                                
+                            elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist() != [] :
+                                tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist()
+
+                            elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist() != [] :
+                                tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist()
+
+                        if tmp_list_1 == [] and tmp_list_2 == [] :
+                            tmp_list_1 = d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] > int(new_neighbouring_core_genes[0]["left_coordinate"]))]["description"].tolist()
+                            tmp_list_2 = d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0])) & (d_gff[g]["left_coordinate"] < int(new_neighbouring_core_genes[1]["left_coordinate"]))]["description"].tolist()
+
+                #if the second core gene is the only one within its contig
+                elif len(df_core_features[df_core_features["contig"] == tmp_core2_row["contig"].values[0]]) <2:
+                    if tmp_list_1 != []:
+                        if d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != [] and d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != [] :
+                            tmp_list_3 = tmp_list_1 + d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                            tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        
+                        elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != []:
+                            tmp_list_1 =+ d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        
+                        elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != []: 
+                            tmp_list_1 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+
+                    elif tmp_list_2 != [] :
+                        if d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != [] and d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != [] :
+                            tmp_list_4 = tmp_list_2 + d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                            tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        
+                        elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != []:
+                            tmp_list_2 =+ d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        
+                        elif d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist() != []: 
+                            tmp_list_2 += d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+
+                    elif tmp_list_1 == [] and tmp_list_2 == [] :
+                        tmp_list_1 = d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] < int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+                        tmp_list_2 = d_gff[g][(d_gff[g]["contig"] == tmp_core2_row["contig"].values[0]) & (d_gff[g]["type"] == "CDS") & (d_gff[g]["left_coordinate"] > int(tmp_core2_row["left_coordinate"].values[0]))]["description"].tolist()
+
+                for number_tmp_list in [tmp_list_1, tmp_list_2, tmp_list_3, tmp_list_4]:
+                    if number_tmp_list != []:
+                        list_of_list_genes2test.append(number_tmp_list)
+
+                d_corespot_genes2test[TA][g] = list_of_list_genes2test
+
+    list_columns = ["qseqid", "qlen", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore"]
+    str_columns_blastp = "6 qseqid qlen sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"
+
+    # now doing the blastp of the reference neighbouring genes with all genes of all possibles combinaisons of every genomes for each TA
+    ref_neigbours_seqio = SeqIO.index(f"{tmp_folder}/ref_genome_neighbours_db.faa", "fasta")
+    #now create a query_tmp file with the sequences of the ref neighbouring genes
+    for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
+        list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
+        list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
+        with open(f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", "w") as tmp_query:
+            for i in list_ref_neigbours_this_TA:
+                tmp_query.write(f">{ref_neigbours_seqio[i].id}\n{ref_neigbours_seqio[i].seq}\n")
+
+        # creating a tmp list file with all genes ids to include in the blastp search
+        with open(f"{tmp_folder}/list_allgenes_samecore_noTA.lst", "w") as f :
+            for list_of_list2_combine in d_corespot_genes2test[TA].values():
+                for l in list_of_list2_combine:
+                    for gene in l:
+                        f.write(f"{gene}\n")
+    
+        # blastp
+        blastp_cline = NcbiblastpCommandline(query = f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", db = f"{tmp_folder}/all_proteome_db", evalue = 0.1,
+                                            outfmt = str_columns_blastp , seqidlist = f"{tmp_folder}/list_allgenes_samecore_noTA.lst",
+                                            out= f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_within_corespot_noTA_all_combinaisons.csv")
+        stdout, stderr = blastp_cline()
+
+    return d_corespot_genes2test, d_genome_with_TA_same_core_spot
+
+
+def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_testedgenes_noTA, reference_genome, list_genomes, outdir):
+
+
+    list_genomes.insert(0,reference_genome)
+    n_index_final_df = 0
+    d_res = {}
+    df_TA_tblast = pd.read_csv(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv", sep = "\t", index_col= 0)
+
+    for TA, d_genes_tested_in_each_genome in d_corespot_testedgenes_noTA.items():
+        for genome in list_genomes:
+            if genome == reference_genome:
+                is_reference_genome = "Yes"
+                ref_corefamily_left = df_all_neigbouring_genes[df_all_neigbouring_genes["TA_homolog_of"] == TA]["left_core_family"].tolist()[0]
+                ref_corefamily_right = df_all_neigbouring_genes[df_all_neigbouring_genes["TA_homolog_of"] == TA]["right_core_family"].tolist()[0]
+
+            else :
+                is_reference_genome = "No"
+
+            if df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])].empty == False:
+                print()
 
 
 

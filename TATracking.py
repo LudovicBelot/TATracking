@@ -35,15 +35,16 @@ def main():
         list_genomes.append(file) #useful later to perform the tblastn analysis in each of these genomes
         if (file.endswith(".fna") or file.endswith(".fasta")) and os.path.exists(tmp_folder+'/blastdb/'+file+".nhr") == False:
             os.system(f"makeblastdb -in {genome_folder+'/'+file} -out {tmp_folder}/blastdb/{file} -parse_seqids -dbtype nucl")
-
+    """
     #now for each of these genomes we will search for the TA using tblastn
     print("Performing tblastN for each TAs")
     for TA_operon in tqdm(od_TA.values()):
         TA_tblastn(TA_operon, list_genomes, TAfile_seqIO, tmp_folder, f"{outdir}/1-tblastn")
-
+    """
+    
     #create a tsv file containing all tblastn from the analysis + their localization compared to the core genome (for each hit)
     print("Associating each toxin/antitoxin hits with their corespot location")
-    localize_with_core(outdir, core_features_file) #uncomment here
+    #localize_with_core(outdir, core_features_file) #uncomment here
 
     #Then associate each Toxin hit with an antitoxin hit if within a same core spot and with an intergenic interval max of 150 bp (?)
     #Note from now, we keep only hits (toxin & antitoxin) with a %id >= 80 and a %cov >= 80%
@@ -363,6 +364,8 @@ def blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_fol
 
     for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
         #first generate a temporary file with the sequence of the TA neigbouring proteins
+        print(TA)
+        print(df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0])
         list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
         list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
         with open(f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", "w") as tmp_query:
@@ -380,11 +383,12 @@ def blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_fol
             for i in list_other_neigbours_this_TA_formated:
                 tmp_seqidlist.write(f"{i}\n")
 
+        if list_ref_neigbours_this_TA != [] and list_other_neigbours_this_TA_formated != []:
 
-        blastp_cline = NcbiblastpCommandline(query = f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", db = f"{tmp_folder}/all_proteome_db", evalue = 0.1,
-                                            outfmt = str_columns_blastp , seqidlist = f"{tmp_folder}/tmp_seqidlist.lst",
-                                            out= f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_near_TA.csv")
-        stdout, stderr = blastp_cline()
+            blastp_cline = NcbiblastpCommandline(query = f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", db = f"{tmp_folder}/all_proteome_db", evalue = 0.1,
+                                                outfmt = str_columns_blastp , seqidlist = f"{tmp_folder}/tmp_seqidlist.lst",
+                                                out= f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_near_TA.csv")
+            stdout, stderr = blastp_cline()
 
 
 def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_features_file, reference_genome, list_genomes, protein_gff_folder, tmp_folder, outdir):
@@ -579,17 +583,21 @@ def blastp_neigbouring_genes_noTA_genomes(df_all_neigbouring_genes, core_feature
                 tmp_query.write(f">{ref_neigbours_seqio[i].id}\n{ref_neigbours_seqio[i].seq}\n")
 
         # creating a tmp list file with all genes ids to include in the blastp search
+        full_genelist2test = []
         with open(f"{tmp_folder}/list_allgenes_samecore_noTA.lst", "w") as f :
             for list_of_list2_combine in d_corespot_genes2test[TA].values():
                 for l in list_of_list2_combine:
                     for gene in l:
                         f.write(f"{gene}\n")
-    
+                        full_genelist2test.append(gene)
+
         # blastp
-        blastp_cline = NcbiblastpCommandline(query = f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", db = f"{tmp_folder}/all_proteome_db", evalue = 0.1,
-                                            outfmt = str_columns_blastp , seqidlist = f"{tmp_folder}/list_allgenes_samecore_noTA.lst",
-                                            out= f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_within_corespot_noTA_all_combinaisons.csv")
-        stdout, stderr = blastp_cline()
+        if list_ref_neigbours_this_TA != [] and full_genelist2test !=[]:
+
+            blastp_cline = NcbiblastpCommandline(query = f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", db = f"{tmp_folder}/all_proteome_db", evalue = 0.1,
+                                                outfmt = str_columns_blastp , seqidlist = f"{tmp_folder}/list_allgenes_samecore_noTA.lst",
+                                                out= f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_within_corespot_noTA_all_combinaisons.csv")
+            stdout, stderr = blastp_cline()
 
     return d_corespot_genes2test, d_genome_with_TA_same_core_spot
 

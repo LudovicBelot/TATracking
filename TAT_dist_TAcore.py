@@ -60,24 +60,21 @@ def main():
         n_corespot +=1  
 
     df_corespot = pd.DataFrame.from_dict(d_corespot, orient = "index")
-    df_corespot.to_csv(f"{outdir}/{genome_name}_detailled_TAcorespot_distribution.csv", sep = "\t")
+    df_corespot.to_csv(f"{outdir}/{genome_name}_detailled_TAcorespot_distribution.tsv", sep = "\t")
 
     d_summary = {} # k =index, v = {number_genes_corespot:..., n_core_spots: ..., n_TA:...} 
     vmax_number_genes_corespot = df_corespot["n_genes"].max()
     
     for i in range(vmax_number_genes_corespot+1):
-        d_summary[i] =  {"number_genes_corespot": i,
+        d_summary[i] =  {"number_genes_within_corespot": i,
                         "n_core_spots": len(df_corespot[df_corespot["n_genes"] == i]),
+                        "total_genes_in_these_corespot_lenght": len(df_corespot[df_corespot["n_genes"] == i])*i,
                         "n_TA": df_corespot[df_corespot["n_genes"] == i]["n_TA"].sum()
                         }
 
     df_summary_corespot = pd.DataFrame.from_dict(d_summary, orient = "index")
-    df_summary_corespot.to_csv(f"{outdir}/{genome_name}_summary_TAcorespot_distribution.csv", sep = "\t", index = False)
+    df_summary_corespot.to_csv(f"{outdir}/{genome_name}_summary_TAcorespot_distribution.tsv", sep = "\t", index = False)
 
-    #plot as an histogramme the distribution
-    histo_plot = df_summary_corespot.plot.bar(x = "number_genes_corespot", y = "n_core_spots")
-    histo_plot.figure.savefig(f"{outdir}/{genome_name}_TAcore_distribution_plot.png")
-    #.savefig(f"{outdir}/{genome_name}_TAcore_distribution_plot.png")
 
 
 

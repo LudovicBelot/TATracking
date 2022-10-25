@@ -179,12 +179,12 @@ def associate_TA_tblastn_hits(all_tblastn_csv , od_TA):
         for toxin_hit_row in df_all_tblastn_80[df_all_tblastn_80["qseqid"] == TA_operon[0]].iterrows():
             df_tmp_antitox = df_all_tblastn_80[(df_all_tblastn_80["qseqid"] == TA_operon[1]) & (df_all_tblastn_80["left_core_family"] == toxin_hit_row[1]["left_core_family"])
             & (df_all_tblastn_80["right_core_family"] == toxin_hit_row[1]["right_core_family"])]
-            #now we keep only close hits >150bp
+            #now we keep only close hits >150bp, updated to 500 bp for a special case in my TA data set.
             if df_tmp_antitox.empty == False :
-                df_tmp_antitox = df_tmp_antitox[(abs(df_tmp_antitox["sstart"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) |
-                                                (abs(df_tmp_antitox["sstart"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) |
-                                                (abs(df_tmp_antitox["send"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) |
-                                                (abs(df_tmp_antitox["send"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=150) ]
+                df_tmp_antitox = df_tmp_antitox[(abs(df_tmp_antitox["sstart"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=500) |
+                                                (abs(df_tmp_antitox["sstart"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=500) |
+                                                (abs(df_tmp_antitox["send"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=500) |
+                                                (abs(df_tmp_antitox["send"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=500) ]
                 if df_tmp_antitox.empty == False:
                     #if there are still multiples hits, we keep the one we the highest e-value (I don't think it should happen often)
                     antitox_hit_row = df_tmp_antitox.sort_values("evalue").iloc[0]
@@ -364,8 +364,6 @@ def blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_fol
 
     for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
         #first generate a temporary file with the sequence of the TA neigbouring proteins
-        print(TA)
-        print(df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0])
         list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
         list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
         with open(f"{tmp_folder}/TA_neigbouring_genes_tmp_blastp_query.faa", "w") as tmp_query:
@@ -611,8 +609,8 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
     df_TA_tblast = pd.read_csv(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv", sep = "\t", index_col= 0)
 
     for TA, d_genes_tested_in_each_genome in d_corespot_testedgenes_noTA.items():
-        df_neighbours_near_TA = pd.read_csv(f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_near_TA.csv", sep = "\t", names= list_columns)
-        df_neighbours_noTA = pd.read_csv(f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_within_corespot_noTA_all_combinaisons.csv", sep = "\t", names= list_columns)
+        df_neighbours_near_TA = pd.DataFrame()
+        df_neighbours_noTA = pd.DataFrame()
 
         for genome in list_genomes:
             #first we reset every variable we store in our final dict
@@ -638,12 +636,18 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
 
             if genome == reference_genome:
                 is_reference_genome = "Yes"
-                ref_corefamily_left = df_all_neigbouring_genes[df_all_neigbouring_genes["TA_homolog_of"] == TA]["left_core_family"].tolist()[0]
-                ref_corefamily_right = df_all_neigbouring_genes[df_all_neigbouring_genes["TA_homolog_of"] == TA]["right_core_family"].tolist()[0]
+                ref_corefamily_left = df_all_neigbouring_genes[(df_all_neigbouring_genes["TA_homolog_of"] == TA) & (df_all_neigbouring_genes["genome_name"] == reference_genome)]["left_core_family"].tolist()[0]
+                ref_corefamily_right = df_all_neigbouring_genes[(df_all_neigbouring_genes["TA_homolog_of"] == TA) & (df_all_neigbouring_genes["genome_name"] == reference_genome)]["right_core_family"].tolist()[0]
                 corefamily_left = ref_corefamily_left
                 corefamily_right = ref_corefamily_right
-                number_neighbours_genes_ref = df_all_neigbouring_genes[df_all_neigbouring_genes["TA_homolog_of"] == TA]["n_neighbours"].tolist()[0]
-                list_ref_neighbours = [x for x in df_all_neigbouring_genes[df_all_neigbouring_genes["TA_homolog_of"] == TA]["neighbours_genes"][0].split(",") if x]
+                number_neighbours_genes_ref = df_all_neigbouring_genes[(df_all_neigbouring_genes["TA_homolog_of"] == TA) & (df_all_neigbouring_genes["genome_name"] == reference_genome)]["n_neighbours"].tolist()[0]
+                list_ref_neighbours = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["TA_homolog_of"] == TA) & (df_all_neigbouring_genes["genome_name"] == reference_genome)]["neighbours_genes"].values[0].split(",") if x]
+                print(list_ref_neighbours)
+                #in case the TA is located between two cores genes and there are no others genes from the pangenome within this corespot, 
+                # we can't track the neighbouring genes
+                if len(list_ref_neighbours) != 0:
+                    df_neighbours_near_TA = pd.read_csv(f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_near_TA.csv", sep = "\t", names= list_columns)
+                    df_neighbours_noTA = pd.read_csv(f"{outdir}/2-neighbouring_genes/blastp_raw_data/{TA}_blastp_neighbours_within_corespot_noTA_all_combinaisons.csv", sep = "\t", names= list_columns)
 
             else :
                 is_reference_genome = "No"
@@ -669,7 +673,12 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                         antitox_left_c = df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["antitox_left_coordinate"].values[0]
                         antitox_right_c = df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["antitox_right_coordinate"].values[0]
                         list_neighbours_TA_this_genome = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]["neighbours_genes"].values[0].split(",") if x]
-                        list_original_corespot_conserved_genes = check_neighbouring_genes_conservation(list_neighbours_TA_this_genome, list_ref_neighbours, df_neighbours_near_TA)
+                        
+                        if df_neighbours_near_TA.empty == False :
+                            list_original_corespot_conserved_genes = check_neighbouring_genes_conservation(list_neighbours_TA_this_genome, list_ref_neighbours, df_neighbours_near_TA)
+                        else:
+                            list_original_corespot_conserved_genes = []
+                        
                         if genome == reference_genome :
                             tuple_number_original_corespot_conserved_compared_to_ref = (len(list_ref_neighbours), len(list_ref_neighbours))
                         else :
@@ -686,11 +695,19 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                                                             ]
                         
                         list_TA_different_location_neighbours = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]["neighbours_genes"].values[0].split(",") if x]
-                        list_TA_different_location_neighbours_conserved = check_neighbouring_genes_conservation(list_TA_different_location_neighbours, list_ref_neighbours, df_neighbours_near_TA)
+                        
+                        if df_neighbours_near_TA.empty == False :
+                            list_TA_different_location_neighbours_conserved = check_neighbouring_genes_conservation(list_TA_different_location_neighbours, list_ref_neighbours, df_neighbours_near_TA)
+                        else : 
+                            list_TA_different_location_neighbours_conserved = []
+                        
                         tuple_number_different_location_conserved_compared_to_ref = (len(list_TA_different_location_neighbours_conserved), len(list_ref_neighbours))
 
-
-                        list_original_corespot_conserved_genes = best_combinaison_of_genes_conserved(TA, genome, d_corespot_testedgenes_noTA, df_neighbours_noTA, list_ref_neighbours)
+                        if df_neighbours_noTA.empty == False:
+                            list_original_corespot_conserved_genes = best_combinaison_of_genes_conserved(TA, genome, d_corespot_testedgenes_noTA, df_neighbours_noTA, list_ref_neighbours)
+                        else :
+                            list_original_corespot_conserved_genes = []
+                        
                         tuple_number_original_corespot_conserved_compared_to_ref = (len(list_original_corespot_conserved_genes), len(list_ref_neighbours))
         
                 elif len(df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]) > 1:
@@ -721,9 +738,14 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                             antitox_left_c = row[1]["antitox_left_coordinate"]
                             antitox_right_c = row[1]["antitox_right_coordinate"]
                             list_neighbours_TA_this_genome = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]["neighbours_genes"].values[0].split(",") if x]
-                            list_original_corespot_conserved_genes = check_neighbouring_genes_conservation(list_neighbours_TA_this_genome, list_ref_neighbours, df_neighbours_near_TA)
+                            
+                            if df_neighbours_near_TA.empty == False:
+                                list_original_corespot_conserved_genes = check_neighbouring_genes_conservation(list_neighbours_TA_this_genome, list_ref_neighbours, df_neighbours_near_TA)
+                            else:
+                                list_original_corespot_conserved_genes = []
+                            
                             if genome == reference_genome:
-                                tuple_number_original_corespot_conserved_compared_to_ref = (len(list_original_corespot_conserved_genes), len(list_original_corespot_conserved_genes))
+                                tuple_number_original_corespot_conserved_compared_to_ref = (len(list_ref_neighbours), len(list_ref_neighbours))
                             else :
                                 tuple_number_original_corespot_conserved_compared_to_ref = (len(list_original_corespot_conserved_genes), len(list_ref_neighbours))
 
@@ -738,26 +760,35 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                                                                 ]
                             
                             list_TA_different_location_neighbours = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]["neighbours_genes"].values[0].split(",") if x]
-                            list_TA_different_location_neighbours_conserved = check_neighbouring_genes_conservation(list_TA_different_location_neighbours, list_ref_neighbours, df_neighbours_near_TA)
+                            
+                            if df_neighbours_near_TA.empty == False:
+                                list_TA_different_location_neighbours_conserved = check_neighbouring_genes_conservation(list_TA_different_location_neighbours, list_ref_neighbours, df_neighbours_near_TA)
+                            else :
+                                list_TA_different_location_neighbours_conserved = []
+                            
                             tuple_number_different_location_conserved_compared_to_ref = (len(list_TA_different_location_neighbours_conserved), len(list_ref_neighbours))
 
 
             elif df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])].empty == True :
                 is_TA_present = "No"
-                list_original_corespot_conserved_genes = best_combinaison_of_genes_conserved(TA, genome, d_corespot_testedgenes_noTA, df_neighbours_noTA, list_ref_neighbours)
+                if df_neighbours_noTA.empty == False:
+                    list_original_corespot_conserved_genes = best_combinaison_of_genes_conserved(TA, genome, d_corespot_testedgenes_noTA, df_neighbours_noTA, list_ref_neighbours)
+                else :
+                    list_original_corespot_conserved_genes = []
+                
                 tuple_number_original_corespot_conserved_compared_to_ref = (len(list_original_corespot_conserved_genes), len(list_ref_neighbours))
 
         
             #now adding the results to the dictionnary
-
-            if tuple_number_different_location_conserved_compared_to_ref == ("-","-"):
+            print("tuple_number_original_corespot_conserved_compared_to_ref", tuple_number_original_corespot_conserved_compared_to_ref)
+            if tuple_number_different_location_conserved_compared_to_ref == ("-","-") or tuple_number_different_location_conserved_compared_to_ref[1] == 0:
                 n_conserved_diff_core = "-"
                 percentage_conserved_diff_core = "-"
             else :
                 n_conserved_diff_core = f"{tuple_number_different_location_conserved_compared_to_ref[0]}/{tuple_number_different_location_conserved_compared_to_ref[1]}"
                 percentage_conserved_diff_core = int(tuple_number_different_location_conserved_compared_to_ref[0])/int(tuple_number_different_location_conserved_compared_to_ref[1])*100
             
-            if tuple_number_original_corespot_conserved_compared_to_ref == ("-","-"):
+            if tuple_number_original_corespot_conserved_compared_to_ref == ("-","-") or tuple_number_original_corespot_conserved_compared_to_ref[1] == 0:
                 n_conserved_same_core = "-"
                 percentage_conserved_same_core = "-"
             else :
@@ -835,7 +866,7 @@ def check_neighbouring_genes_conservation(list_genes_new_genome, list_genes_ref,
             if len(df_hits_neighbouring_genes[df_hits_neighbouring_genes["qseqid"] == gene]) == 1 and df_hits_neighbouring_genes[df_hits_neighbouring_genes["qseqid"] == gene]["sseqid"].values[0] not in res_list:
                res_list.append(df_hits_neighbouring_genes[df_hits_neighbouring_genes["qseqid"] == gene]["sseqid"].values[0])
             elif len(df_hits_neighbouring_genes[df_hits_neighbouring_genes["qseqid"] == gene]) > 1 :
-                for gene_matching_with_ref in df_hits_neighbouring_genes[df_hits_neighbouring_genes["qseqid"] == gene]["sseq"].tolist():
+                for gene_matching_with_ref in df_hits_neighbouring_genes[df_hits_neighbouring_genes["qseqid"] == gene]["sseqid"].tolist():
                     if gene_matching_with_ref not in res_list:
                         res_list.append(gene_matching_with_ref)
                         break

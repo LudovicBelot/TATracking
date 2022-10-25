@@ -33,61 +33,57 @@ def main():
     d_res_TA_conserved_percentage, d_res_noTA_conserved_percentage, d_res_TA_alone = init_dict_df(list_genome, [d_res_TA_conserved_percentage, d_res_noTA_conserved_percentage, d_res_TA_alone])
 
     #list_genome = df_TAT["Genome"].drop_duplicates().tolist()
-    n_break = 7
+
     for TA in df_TAT["Ref_TA"].drop_duplicates().tolist():
         #first we determine whether there are the only genes (different of the TA) within the same core spot, 
         # in this cases we cannot do the heatmap because there were no genes to track within the phylogeny
-        if n_break == 0:
-            break
-        else :
-            n_break -= 1
 
         if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == reference_genome)]["list_neighbours_TA"].values[0] == "[]":
             for genome in list_genome:
                 if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["Yes"]:
                     d_res_TA_alone[genome][TA] = 1
-                    d_res_noTA_conserved_percentage[genome][TA] = None
-                    d_res_TA_conserved_percentage[genome][TA] = None
+                    d_res_noTA_conserved_percentage[genome][TA] = float('nan')
+                    d_res_TA_conserved_percentage[genome][TA] = float('nan')
 
                 else :
-                    d_res_TA_alone[genome][TA] = None
-                    d_res_noTA_conserved_percentage[genome][TA] = None
-                    d_res_TA_conserved_percentage[genome][TA] =  None
+                    d_res_TA_alone[genome][TA] = float('nan')
+                    d_res_noTA_conserved_percentage[genome][TA] = float('nan')
+                    d_res_TA_conserved_percentage[genome][TA] =  float('nan')
 
         else :
             for genome in list_genome:
                 if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["Yes", "?"]:
                     d_res_TA_conserved_percentage[genome][TA] = float(df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0])
-                    d_res_noTA_conserved_percentage[genome][TA] = None
-                    d_res_TA_alone[genome][TA] = None
+                    d_res_noTA_conserved_percentage[genome][TA] = float('nan')
+                    d_res_TA_alone[genome][TA] = float('nan')
 
                 elif df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Is_TA_homolog"].values[0] == "Yes" and df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] == "No":
                     if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0] != "-":
                         d_res_noTA_conserved_percentage[genome][TA] = float(df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0])
-                        d_res_TA_conserved_percentage[genome][TA] = None
-                        d_res_TA_alone[genome][TA] = None
+                        d_res_TA_conserved_percentage[genome][TA] = float('nan')
+                        d_res_TA_alone[genome][TA] = float('nan')
                     else :
-                        d_res_noTA_conserved_percentage[genome][TA] = None
-                        d_res_TA_conserved_percentage[genome][TA] = None
-                        d_res_TA_alone[genome][TA] = None
+                        d_res_noTA_conserved_percentage[genome][TA] = float('nan')
+                        d_res_TA_conserved_percentage[genome][TA] = float('nan')
+                        d_res_TA_alone[genome][TA] = float('nan')
 
                 elif df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Is_TA_homolog"].values[0] == "No":
                     d_res_noTA_conserved_percentage[genome][TA] = float(df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0])
-                    d_res_TA_conserved_percentage[genome][TA] = None
-                    d_res_TA_alone[genome][TA] = None
+                    d_res_TA_conserved_percentage[genome][TA] = float('nan')
+                    d_res_TA_alone[genome][TA] = float('nan')
 
 
     df_heatmap_neighbours_same_core_with_TA = pd.DataFrame.from_dict(d_res_TA_conserved_percentage, orient = "index").reindex(list_genome)
     df_heatmap_no_TA = pd.DataFrame.from_dict(d_res_noTA_conserved_percentage, orient = "index").reindex(list_genome)
     df_heatmap_TA_alone = pd.DataFrame.from_dict(d_res_TA_alone, orient = "index").reindex(list_genome)
-    print(df_heatmap_neighbours_same_core_with_TA)
+
     #creating the heatmap
-    fig, ax = plt.subplots(figsize = (12,12))
+    fig, ax = plt.subplots(figsize = (24,12))
     color_palette_with_TA = sns.color_palette("blend:#ffb5a1,#FF0000", as_cmap=True)
     color_palette_noTA = sns.color_palette("blend:#FFFFE0,#FFB81C", as_cmap=True)
     color_palette_TAalone = sns.color_palette("blend:#FFFFFF,#ff25fc", as_cmap=True)
     sns.heatmap(df_heatmap_neighbours_same_core_with_TA, cmap = color_palette_with_TA, vmin = 0, vmax = 100, linewidths = 0.20)
-    #sns.heatmap(df_heatmap_TA_alone, cmap = color_palette_TAalone, vmin = 0, vmax =1, linewidths = 0.20, cbar = False)
+    sns.heatmap(df_heatmap_TA_alone, cmap = color_palette_TAalone, vmin = 0, vmax =1, linewidths = 0.20, cbar = False)
     fig = sns.heatmap(df_heatmap_no_TA, cmap = color_palette_noTA, vmin = 0, vmax = 100, linewidths = 0.20).get_figure()
     fig.savefig(f"{outdir}/test.png")
 

@@ -3,7 +3,7 @@ import sys
 import pandas as pd
 import matplotlib.pylab as plt
 
-#commandline: python script/TAT_dist_TAcore.py input/core_genome/core_genome_photorhabdus_genus_features.csv input/gff3/PhAl.1022.00001.gff results/TATracking_final_results_only_0179-180.csv results/3-TAcore_distribution
+#commandline: python script/TAT_dist_TAcore.py input/core_genome/core_genome_photorhabdus_genus_features.csv input/gff3/PhAl.1022.00001.gff results/TATracking_final_results.tsv results/3-TAcore_distribution
 
 
 #this script will return an histogramme representing the distribution of the number of genes within all corespot in the given genome and where the TA are located on.

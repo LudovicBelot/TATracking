@@ -11,7 +11,7 @@ from Bio.Blast.Applications import NcbitblastnCommandline, NcbiblastpCommandline
 
 
 #commandline test : python script/TATracking.py input/TAseq.fna input/replicons input/core_genome/core_genome_photorhabdus_genus_features.csv PhAl.1022.00001 input
-
+#pb commandline : python script/TATracking.py input/TAseq_pb.fna input/replicons input/core_genome/core_genome_photorhabdus_genus_features.csv PhAl.1022.00001 input
 
 def main():
 
@@ -28,23 +28,23 @@ def main():
 
     #create_outdir()
     tmp_folder = "tmp"
-    outdir = "results"
+    outdir = "results_pb"
 
     #First create (if not already done) a nucleotidic blast db for each genome to study
     for file in os.listdir(genome_folder):
         list_genomes.append(file) #useful later to perform the tblastn analysis in each of these genomes
         if (file.endswith(".fna") or file.endswith(".fasta")) and os.path.exists(tmp_folder+'/blastdb/'+file+".nhr") == False:
             os.system(f"makeblastdb -in {genome_folder+'/'+file} -out {tmp_folder}/blastdb/{file} -parse_seqids -dbtype nucl")
+    
     """
     #now for each of these genomes we will search for the TA using tblastn
     print("Performing tblastN for each TAs")
     for TA_operon in tqdm(od_TA.values()):
         TA_tblastn(TA_operon, list_genomes, TAfile_seqIO, tmp_folder, f"{outdir}/1-tblastn")
     """
-    
     #create a tsv file containing all tblastn from the analysis + their localization compared to the core genome (for each hit)
     print("Associating each toxin/antitoxin hits with their corespot location")
-    #localize_with_core(outdir, core_features_file) #uncomment here
+    localize_with_core(outdir, core_features_file) #uncomment here
 
     #Then associate each Toxin hit with an antitoxin hit if within a same core spot and with an intergenic interval max of 150 bp (?)
     #Note from now, we keep only hits (toxin & antitoxin) with a %id >= 80 and a %cov >= 80%
@@ -186,8 +186,8 @@ def associate_TA_tblastn_hits(all_tblastn_csv , od_TA):
                                                 (abs(df_tmp_antitox["send"] - min(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=500) |
                                                 (abs(df_tmp_antitox["send"] - max(int(toxin_hit_row[1]["sstart"]),int(toxin_hit_row[1]["send"]))) <=500) ]
                 if df_tmp_antitox.empty == False:
-                    #if there are still multiples hits, we keep the one we the highest e-value (I don't think it should happen often)
-                    antitox_hit_row = df_tmp_antitox.sort_values("evalue").iloc[0]
+                    #if there are still multiples hits, we keep the one with the lowest e-value (I don't think it should happen often)
+                    antitox_hit_row = df_tmp_antitox.sort_values("evalue").reset_index(drop = True).iloc[0]
                     d_full_TA[n_index] = {"ref_toxin": toxin_hit_row[1]["qseqid"], "tox_pident": toxin_hit_row[1]["pident"], "tox_pcov": toxin_hit_row[1]["length"]/toxin_hit_row[1]["qlen"]*100, "tox_evalue": toxin_hit_row[1]["evalue"],
                                         "tox_left_coordinate": min(toxin_hit_row[1]["sstart"], toxin_hit_row[1]["send"]), "tox_right_coordinate": max(toxin_hit_row[1]["sstart"],toxin_hit_row[1]["send"]),
                                         "ref_antitoxin": antitox_hit_row["qseqid"], "antitox_pident": antitox_hit_row["pident"], "antitox_pcov": antitox_hit_row["length"]/antitox_hit_row["qlen"]*100, "antitox_evalue": antitox_hit_row["evalue"],
@@ -642,7 +642,6 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                 corefamily_right = ref_corefamily_right
                 number_neighbours_genes_ref = df_all_neigbouring_genes[(df_all_neigbouring_genes["TA_homolog_of"] == TA) & (df_all_neigbouring_genes["genome_name"] == reference_genome)]["n_neighbours"].tolist()[0]
                 list_ref_neighbours = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["TA_homolog_of"] == TA) & (df_all_neigbouring_genes["genome_name"] == reference_genome)]["neighbours_genes"].values[0].split(",") if x]
-                print(list_ref_neighbours)
                 #in case the TA is located between two cores genes and there are no others genes from the pangenome within this corespot, 
                 # we can't track the neighbouring genes
                 if len(list_ref_neighbours) != 0:
@@ -714,16 +713,16 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                     TA_multiple_copies = "Yes"
                     n_break = 2
                     is_same_corespot = "No"
-
+                    
                     for row in df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])].iterrows():
-                        n_break -=1
                         if n_break == 0:
                             break
+                        n_break -=1
 
                         tmp_corefamily_left = row[1]["left_core_family"]
                         tmp_corefamily_right = row[1]["right_core_family"]
-                        tmp_is_same_corespot = check_corespot_with_ref(corefamily_left, corefamily_right, tmp_corefamily_left,  tmp_corefamily_right) 
-
+                        tmp_is_same_corespot = check_corespot_with_ref(tmp_corefamily_left, tmp_corefamily_right,  ref_corefamily_left,  ref_corefamily_right) 
+  
                         if tmp_is_same_corespot == "Yes" or is_same_corespot == "?":
                             is_same_corespot = "Yes"
                             corefamily_left = tmp_corefamily_left
@@ -780,7 +779,6 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
 
         
             #now adding the results to the dictionnary
-            print("tuple_number_original_corespot_conserved_compared_to_ref", tuple_number_original_corespot_conserved_compared_to_ref)
             if tuple_number_different_location_conserved_compared_to_ref == ("-","-") or tuple_number_different_location_conserved_compared_to_ref[1] == 0:
                 n_conserved_diff_core = "-"
                 percentage_conserved_diff_core = "-"

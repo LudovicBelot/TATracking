@@ -6,7 +6,7 @@ import matplotlib.pylab as plt
 from datetime import date
 import argparse
 
-#commandline : python script/TAT_heatmap.py -f results/TATracking_final_results.tsv -o results --order input/ordered_list_genomes_rooted_xbmm.lst -r PhAl.1022.00001 --names input/redo_name_dict.txt -t input/list_TA/TAlist_stabilizing.txt
+#commandline : python script/TAT_heatmap.py -f 23-01-23_results/TATracking_final_results.tsv -o 23-01-23_results --order input/ordered_list_genomes_rooted_xbmm.lst -r PhAl.1022.00001 --names input/redo_name_dict.txt -t input/list_TA/TAlist_stabilizing.txt
 
 
 def main():
@@ -25,8 +25,8 @@ def main():
     #list_genome = df_TAT["Genome"].drop_duplicates().tolist()
 
     for TA in list_TA:
-        #first we determine whether there are the only genes (different of the TA) within the same core spot, 
-        # in this cases we cannot do the heatmap because there were no genes to track within the phylogeny
+        #first we determine whether there are others genes (different of the TA) within the same core spot (in the ref genome), 
+        # otherwise we cannot do the heatmap because there were no genes to track within the phylogeny
 
         if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == reference_genome)]["list_neighbours_TA"].values[0] == "[]":
             d_number_neighbours_ref[TA] = 0
@@ -74,7 +74,7 @@ def main():
     #calculate the number of TA conserved in each strain & the number of GI conserved ( based on the number of genes)
     d_data_per_genome = {}
     for genome in list_genome:
-        d_data_per_genome[genome] = {"n_TA_conserved": df_heatmap_neighbours_same_core_with_TA.loc[genome].count() + df_heatmap_TA_alone.loc[genome].count(),
+        d_data_per_genome[genome] = {"n_TA_conserved": df_heatmap_neighbours_same_core_with_TA.loc[genome].count(), #+ df_heatmap_TA_alone.loc[genome].count(),
                                     "n_20%_neighbours_conserved": df_heatmap_neighbours_same_core_with_TA.loc[genome].ge(20).sum()+df_heatmap_no_TA.loc[genome].ge(20).sum(),
                                     "n_40%_neighbours_conserved": df_heatmap_neighbours_same_core_with_TA.loc[genome].ge(40).sum()+df_heatmap_no_TA.loc[genome].ge(40).sum(),
                                     "n_60%_neighbours_conserved": df_heatmap_neighbours_same_core_with_TA.loc[genome].ge(60).sum()+df_heatmap_no_TA.loc[genome].ge(60).sum(),
@@ -97,8 +97,6 @@ def main():
     fig, ax = plt.subplots(figsize = (24,12))
     cbar_ax1 = fig.add_axes([.915, .50, .018, .385])
     cbar_ax2 = fig.add_axes([.915, .10, .018, .385])
-
-    #adapt the xticks to the number of TA studied
 
     fig.text(0.97,.682, "TA detected\n(Same core)", horizontalalignment='center', verticalalignment='center', fontsize = "x-large")
     fig.text(0.97,.282, "TA absent", horizontalalignment='center', verticalalignment='center', fontsize = "x-large")

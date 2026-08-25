@@ -27,31 +27,39 @@ def main():
     list_genomes = []
 
     #create_outdir()
-    tmp_folder = "tmp"
-    outdir = "results_pb"
+    tmp_folder = "24-03-28_results_only_samecore/tmp"
+    outdir = "24-03-28_results_only_samecore"
 
-    #First create (if not already done) a nucleotidic blast db for each genome to study
+
+    #Getting the list of genomes files
     for file in os.listdir(genome_folder):
         list_genomes.append(file) #useful later to perform the tblastn analysis in each of these genomes
-        if (file.endswith(".fna") or file.endswith(".fasta")) and os.path.exists(tmp_folder+'/blastdb/'+file+".nhr") == False:
-            os.system(f"makeblastdb -in {genome_folder+'/'+file} -out {tmp_folder}/blastdb/{file} -parse_seqids -dbtype nucl")
-    
-    """
-    #now for each of these genomes we will search for the TA using tblastn
-    print("Performing tblastN for each TAs")
-    for TA_operon in tqdm(od_TA.values()):
-        TA_tblastn(TA_operon, list_genomes, TAfile_seqIO, tmp_folder, f"{outdir}/1-tblastn")
-    """
-    #create a tsv file containing all tblastn from the analysis + their localization compared to the core genome (for each hit)
-    print("Associating each toxin/antitoxin hits with their corespot location")
-    localize_with_core(outdir, core_features_file) #uncomment here
 
-    #Then associate each Toxin hit with an antitoxin hit if within a same core spot and with an intergenic interval max of 150 bp (?)
-    #Note from now, we keep only hits (toxin & antitoxin) with a %id >= 80 and a %cov >= 80%
-    print("Determining the localization of each complete TA hits")
-    df_full_TA_tblastn = associate_TA_tblastn_hits(f"{outdir}/1-tblastn/all_tblastn_raw_with_core.csv", od_TA) #uncomment here
-    df_full_TA_tblastn.to_csv(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv" , sep = "\t")
+    if os.path.exists(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv") == False:
+        
+        #First create (if not already done) a nucleotidic blast db for each genome to study
+        for genome_file in list_genomes:
+            if (genome_file.endswith(".fna") or genome_file.endswith(".fasta")) and os.path.exists(tmp_folder+'/blastdb/'+genome_file+".nhr") == False:
+                os.system(f"makeblastdb -in {genome_folder+'/'+genome_file} -out {tmp_folder}/blastdb/{genome_file} -parse_seqids -dbtype nucl")
+        
+        #now for each of these genomes we will search for the TA using tblastn
+        print("Performing tblastN for each TAs")
+        for TA_operon in tqdm(od_TA.values()):
+            TA_tblastn(TA_operon, list_genomes, TAfile_seqIO, tmp_folder, f"{outdir}/1-tblastn")
 
+        #create a tsv file containing all tblastn from the analysis + their localization compared to the core genome (for each hit)
+        print("Associating each toxin/antitoxin hits with their corespot location")
+        localize_with_core(outdir, core_features_file) #uncomment here
+
+        #Then associate each Toxin hit with an antitoxin hit if within a same core spot and with an intergenic interval max of 150 bp (?)
+        #Note from now, we keep only hits (toxin & antitoxin) with a %id >= 80 and a %cov >= 80%
+        print("Determining the localization of each complete TA hits")
+        df_full_TA_tblastn = associate_TA_tblastn_hits(f"{outdir}/1-tblastn/all_tblastn_raw_with_core.csv", od_TA) #uncomment here
+        df_full_TA_tblastn.to_csv(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv" , sep = "\t")
+
+    else :
+        df_full_TA_tblastn = pd.read_csv(f"{outdir}/1-tblastn/full_TA_tblastn_with_core.csv", sep = "\t", comment = "#", index_col = 0)
+        
     # for each TA operon hit, we get the neigbouring_genes genes in each genome
     #df_ref_neigbouring_genes = get_ref_neighbouring_genes(df_full_TA_tblastn, reference_genome, protein_gff_folder)
     #df_ref_neigbouring_genes.to_csv(f"{outdir}/2-neighbouring_genes/ref_genome_neigbouring_genes.csv", sep = "\t")
@@ -60,9 +68,10 @@ def main():
     df_all_neigbouring_genes.to_csv(f"{outdir}/2-neighbouring_genes/all_genome_neigbouring_genes.csv", sep = "\t")
 
     # now we do blast the TAs neighbouring genes from the reference genome in with all neighbouring genes 
-    print("Blastp of the TAs neighbouring genes with the reference neighbouring genes")
+    print("Creating blastp db")
     create_db_blastp(df_all_neigbouring_genes, reference_genome, list_genomes, protein_gff_folder, tmp_folder)
-
+    
+    print("Blastp of the TAs neighbouring genes with the reference neighbouring genes")
     #for each TA, we do a blastP of each neigbouring genes from the reference genome with the neighbouring genes from the other genomes
     blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_folder, outdir)
     #Then we also look for the neigbouring genes in the genome for which we do not have the TA within the same core spot
@@ -362,7 +371,7 @@ def blastp_neigbouring_genes(df_all_neigbouring_genes, reference_genome, tmp_fol
     list_columns = ["qseqid", "qlen", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore"]
     str_columns_blastp = "6 qseqid qlen sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"
 
-    for TA in df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist():
+    for TA in tqdm(df_all_neigbouring_genes["TA_homolog_of"].drop_duplicates().tolist()):
         #first generate a temporary file with the sequence of the TA neigbouring proteins
         list_ref_neigbours_this_TA = df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == reference_genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)].drop_duplicates(subset = "TA_homolog_of")["neighbours_genes"].values[0]
         list_ref_neigbours_this_TA = [x for x in list_ref_neigbours_this_TA.split(",") if x]
@@ -661,7 +670,10 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                     corefamily_right = df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["right_core_family"].values[0]
                     is_same_corespot = check_corespot_with_ref(corefamily_left, corefamily_right, ref_corefamily_left,  ref_corefamily_right) 
                     
-                    if is_same_corespot == "Yes" or is_same_corespot == "?":
+                    #if is_same_corespot == "Yes" or is_same_corespot == "?": #Analysis of 23/01
+                    # updated to only == "Yes", so we have both heatmap, one assuming that TAs on contig without any core genes are the one we're looking for, and the other case in which we do not keep them
+                    if is_same_corespot == "Yes":
+                        
                         TA_contig = df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["sseqid_TA"].values[0]
                         tox_pid = df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["tox_pident"].values[0]
                         tox_pcov = df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["tox_pcov"].values[0]
@@ -683,7 +695,9 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                         else :
                             tuple_number_original_corespot_conserved_compared_to_ref = (len(list_original_corespot_conserved_genes), len(list_ref_neighbours))
 
-                    elif is_same_corespot == "No":
+                    #elif is_same_corespot == "No":
+                    #updated to add here is_same_corespot == "?", see above
+                    elif is_same_corespot == "No" or is_same_corespot == "?": 
                         TA_different_location = [df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["sseqid_TA"].values[0],
                                                             min(df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["tox_left_coordinate"].values[0],df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["antitox_left_coordinate"].values[0]),
                                                             max( df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["tox_right_coordinate"].values[0], df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])]["antitox_right_coordinate"].values[0]),
@@ -713,17 +727,20 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                     TA_multiple_copies = "Yes"
                     n_break = 2
                     is_same_corespot = "No"
-                    
+                    already_done = (False, 1000) # In case we have multiples hits within the same core spot
+
                     for row in df_TA_tblast[(df_TA_tblast["genome_name"] == genome) & (df_TA_tblast["ref_toxin"] == TA.split("-")[0])].iterrows():
-                        if n_break == 0:
-                            break
-                        n_break -=1
 
                         tmp_corefamily_left = row[1]["left_core_family"]
                         tmp_corefamily_right = row[1]["right_core_family"]
                         tmp_is_same_corespot = check_corespot_with_ref(tmp_corefamily_left, tmp_corefamily_right,  ref_corefamily_left,  ref_corefamily_right) 
-  
-                        if tmp_is_same_corespot == "Yes" or is_same_corespot == "?":
+                        
+                        if tmp_is_same_corespot == "Yes" or tmp_is_same_corespot == "?":
+                            if already_done[0] == True:
+                                #We keep the toxin hit with the lowest evalue
+                                if row[1]["tox_evalue"] >= already_done[1]:
+                                    continue
+
                             is_same_corespot = "Yes"
                             corefamily_left = tmp_corefamily_left
                             corefamily_right = tmp_corefamily_right
@@ -737,7 +754,9 @@ def analyze_blastp_neighbouring_genes_step(df_all_neigbouring_genes, d_corespot_
                             antitox_left_c = row[1]["antitox_left_coordinate"]
                             antitox_right_c = row[1]["antitox_right_coordinate"]
                             list_neighbours_TA_this_genome = [x for x in df_all_neigbouring_genes[(df_all_neigbouring_genes["genome_name"] == genome) & (df_all_neigbouring_genes["TA_homolog_of"] == TA)]["neighbours_genes"].values[0].split(",") if x]
-                            
+                            already_done = (True, row[1]["tox_evalue"])
+
+
                             if df_neighbours_near_TA.empty == False:
                                 list_original_corespot_conserved_genes = check_neighbouring_genes_conservation(list_neighbours_TA_this_genome, list_ref_neighbours, df_neighbours_near_TA)
                             else:

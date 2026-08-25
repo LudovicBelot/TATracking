@@ -7,7 +7,7 @@ from datetime import date
 import argparse
 
 #commandline : python script/TAT_heatmap.py -f 23-01-23_results/TATracking_final_results.tsv -o 23-01-23_results --order input/ordered_list_genomes_rooted_xbmm.lst -r PhAl.1022.00001 --names input/redo_name_dict.txt -t input/list_TA/TAlist_stabilizing.txt
-
+# python script/TAT_heatmap.py -f 24-03-28_results_only_samecore/TATracking_final_results.tsv -o 24-03-28_results_only_samecore --order input/ordered_list_genomes_rooted_xbmm.lst -r PhAl.1022.00001 --names input/redo_name_dict.txt 
 
 def main():
 
@@ -31,7 +31,7 @@ def main():
         if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == reference_genome)]["list_neighbours_TA"].values[0] == "[]":
             d_number_neighbours_ref[TA] = 0
             for genome in list_genome:
-                if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["Yes"]:
+                if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["Yes"] :#update to change "?" to no
                     d_res_TA_alone[genome][TA] = 1
                     d_res_noTA_conserved_percentage[genome][TA] = float('nan')
                     d_res_TA_conserved_percentage[genome][TA] = float('nan')
@@ -44,12 +44,12 @@ def main():
         else :
             d_number_neighbours_ref[TA] = len([x for x in df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == reference_genome)]["list_neighbours_TA"].values[0].replace("[","").replace("]","").split(",") if x])
             for genome in list_genome:
-                if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["Yes", "?"]:
+                if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["Yes"]: #update to change "?" to no
                     d_res_TA_conserved_percentage[genome][TA] = float(df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0])
                     d_res_noTA_conserved_percentage[genome][TA] = float('nan')
                     d_res_TA_alone[genome][TA] = float('nan')
 
-                elif df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Is_TA_homolog"].values[0] == "Yes" and df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] == "No":
+                elif df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Is_TA_homolog"].values[0] == "Yes" and df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Same_core_spot"].values[0] in ["No", "?"]:
                     if df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0] != "-":
                         d_res_noTA_conserved_percentage[genome][TA] = float(df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0])
                         d_res_TA_conserved_percentage[genome][TA] = float('nan')
@@ -59,7 +59,7 @@ def main():
                         d_res_TA_conserved_percentage[genome][TA] = float('nan')
                         d_res_TA_alone[genome][TA] = float('nan')
 
-                elif df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Is_TA_homolog"].values[0] == "No":
+                elif df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["Is_TA_homolog"].values[0] in ["No"]: #update to change "?" to no
                     d_res_noTA_conserved_percentage[genome][TA] = float(df_TAT[(df_TAT["Ref_TA"] == TA) & (df_TAT["Genome"] == genome)]["%_conserved_genes/ref_genes"].values[0])
                     d_res_TA_conserved_percentage[genome][TA] = float('nan')
                     d_res_TA_alone[genome][TA] = float('nan')
